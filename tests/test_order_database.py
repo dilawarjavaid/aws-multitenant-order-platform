@@ -49,6 +49,33 @@ def test_create_order_persists_items(monkeypatch):
                     ]
                 )
                 result = order_service.create_order(tenant_id, request)
+                
+                # The owning tenant can retrieve its order.
+                retrieved = order_service.get_order(tenant_id, result.id)
+
+                assert retrieved is not None
+                assert retrieved.id == result.id
+                assert retrieved.tenant_id == tenant_id
+                assert retrieved.items[0].quantity == 3
+
+                # Create a second, valid tenant.
+                other_tenant_id = uuid4()
+                with test_sessions.begin() as session:
+                    session.add(
+                        Tenant(
+                            id=other_tenant_id,
+                            name="Other Retailer",
+                        )
+                    )
+
+                # Another tenant cannot retrieve the owner's order.
+                assert (
+                    order_service.get_order(other_tenant_id, result.id)
+                    is None
+                )
+
+                # A nonexistent order also returns None.
+                assert order_service.get_order(tenant_id, uuid4()) is None
 
                 # Read through a separate session after the service commits.
                 with test_sessions() as session:

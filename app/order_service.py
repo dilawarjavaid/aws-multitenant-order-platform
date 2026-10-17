@@ -3,6 +3,7 @@ from uuid import UUID
 from app.database import SessionLocal
 from app.models import Order, OrderItem, Tenant
 from app.schemas import OrderCreate, OrderItemResponse, OrderResponse
+from sqlalchemy import select
 
 
 class TenantNotFoundError(Exception):
@@ -41,3 +42,32 @@ def create_order(tenant_id: UUID, request: OrderCreate) -> OrderResponse:
         )
 
     return response
+
+def get_order(tenant_id: UUID, order_id: UUID) -> OrderResponse | None:
+    with SessionLocal() as session:
+        order = session.scalar(
+            select(Order).where(
+                Order.id == order_id,
+                Order.tenant_id == tenant_id,
+            )
+        )
+
+        if order is None:
+            return None
+
+        items = session.scalars(
+            select(OrderItem)
+            .where(OrderItem.order_id == order.id)
+            .order_by(OrderItem.id)
+        ).all()
+
+        return OrderResponse(
+            id=order.id,
+            tenant_id=order.tenant_id,
+            status=order.status,
+            created_at=order.created_at,
+            items=[
+                OrderItemResponse.model_validate(item)
+                for item in items
+            ],
+        )
