@@ -17,7 +17,7 @@ def test_create_order_persists_items(monkeypatch):
 
     from app import order_service
     from app.database import engine
-    from app.models import Order, OrderItem, OutboxEvent, Tenant
+    from app.models import Order, OrderItem, OutboxEvent, Product, Tenant
     from app.schemas import OrderCreate
 
     test_engine = create_engine(
@@ -44,6 +44,18 @@ def test_create_order_persists_items(monkeypatch):
                 with test_sessions.begin() as session:
                     session.add(
                         Tenant(id=tenant_id, name="Test Retailer")
+                    )
+                    session.flush()
+
+                    session.add(
+                        Product(
+                            id=product_id,
+                            tenant_id=tenant_id,
+                            name="Test Product",
+                            currency="USD",
+                            unit_price_minor=1999,
+                            stock_quantity=10,
+                        )
                     )
 
                 request = OrderCreate(
@@ -135,7 +147,7 @@ def test_failed_insert_rolls_back_order(monkeypatch, failure_target):
 
     from app import order_service
     from app.database import engine
-    from app.models import Order, OrderItem, OutboxEvent, Tenant
+    from app.models import Order, OrderItem, OutboxEvent, Product, Tenant
     from app.schemas import OrderCreate
 
     test_engine = create_engine(
@@ -166,14 +178,29 @@ def test_failed_insert_rolls_back_order(monkeypatch, failure_target):
                 )
 
                 tenant_id = uuid4()
+                product_id = uuid4()
 
                 with test_sessions.begin() as session:
                     session.add(
                         Tenant(id=tenant_id, name="Rollback Retailer")
                     )
+                    session.flush()
+
+                    session.add(
+                        Product(
+                            id=product_id,
+                            tenant_id=tenant_id,
+                            name="Rollback Test Product",
+                            currency="USD",
+                            unit_price_minor=1999,
+                            stock_quantity=10,
+                        )
+                    )
 
                 request = OrderCreate(
-                    items=[{"product_id": uuid4(), "quantity": 2}]
+                    items=[
+                        {"product_id": product_id, "quantity": 2}
+                    ]
                 )
 
                 event.listen(

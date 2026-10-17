@@ -16,7 +16,7 @@ pytestmark = pytest.mark.skipif(
 def outbox_setup(monkeypatch):
     from app import order_service, outbox_publisher
     from app.database import engine
-    from app.models import OutboxEvent, Tenant
+    from app.models import OutboxEvent, Product, Tenant
     from app.schemas import OrderCreate
 
     test_engine = create_engine(
@@ -37,23 +37,39 @@ def outbox_setup(monkeypatch):
                 monkeypatch.setattr(outbox_publisher, "SessionLocal", sessions)
 
                 tenant_id = uuid4()
+                product_id = uuid4()
 
                 with sessions.begin() as session:
-                    # Temporarily exclude any pre-existing pending events.
+                    # Temporarily exclude pre-existing pending events.
                     # The outer rollback restores them after the test.
                     session.execute(
                         update(OutboxEvent)
                         .where(OutboxEvent.published_at.is_(None))
                         .values(published_at=func.now())
                     )
+
                     session.add(
                         Tenant(id=tenant_id, name="Publisher Test Retailer")
+                    )
+                    session.flush()
+
+                    session.add(
+                        Product(
+                            id=product_id,
+                            tenant_id=tenant_id,
+                            name="Publisher Test Product",
+                            currency="USD",
+                            unit_price_minor=1999,
+                            stock_quantity=10,
+                        )
                     )
 
                 order = order_service.create_order(
                     tenant_id,
                     OrderCreate(
-                        items=[{"product_id": uuid4(), "quantity": 2}]
+                        items=[
+                            {"product_id": product_id, "quantity": 2}
+                        ]
                     ),
                 )
 
@@ -92,9 +108,10 @@ def test_publisher_delivers_and_marks_event(outbox_setup):
         assert message.event_id == event.id
         assert event.published_at is not None
 
-    # Published events must not be sent again on the next successful run.
+    # A later successful run must not resend the published event.
     assert publish_pending_events(send=delivered.append) == 0
     assert len(delivered) == 1
+
 
 def test_failed_delivery_keeps_event_pending(outbox_setup):
     from app.models import OutboxEvent

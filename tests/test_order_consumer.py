@@ -17,7 +17,7 @@ def consumer_setup(monkeypatch):
     from app import order_consumer, order_service
     from app.database import engine
     from app.events import EventMessage
-    from app.models import OutboxEvent, Tenant
+    from app.models import OutboxEvent, Product, Tenant
     from app.schemas import OrderCreate
 
     test_engine = create_engine(
@@ -38,16 +38,31 @@ def consumer_setup(monkeypatch):
                 monkeypatch.setattr(order_consumer, "SessionLocal", sessions)
 
                 tenant_id = uuid4()
+                product_id = uuid4()
 
                 with sessions.begin() as session:
                     session.add(
                         Tenant(id=tenant_id, name="Consumer Test Retailer")
                     )
+                    session.flush()
+
+                    session.add(
+                        Product(
+                            id=product_id,
+                            tenant_id=tenant_id,
+                            name="Consumer Test Product",
+                            currency="USD",
+                            unit_price_minor=1999,
+                            stock_quantity=10,
+                        )
+                    )
 
                 order = order_service.create_order(
                     tenant_id,
                     OrderCreate(
-                        items=[{"product_id": uuid4(), "quantity": 2}]
+                        items=[
+                            {"product_id": product_id, "quantity": 2}
+                        ]
                     ),
                 )
 
@@ -57,6 +72,8 @@ def consumer_setup(monkeypatch):
                             OutboxEvent.aggregate_id == order.id
                         )
                     )
+
+                    assert event is not None
 
                     message = EventMessage(
                         event_id=event.id,
@@ -97,6 +114,7 @@ def test_duplicate_event_is_processed_once(consumer_setup):
         assert order is not None
         assert order.status == "pending"
 
+
 def test_failed_processing_rolls_back_receipt(consumer_setup):
     from app.models import ProcessedEvent
     from app.order_consumer import CONSUMER_NAME, process_order_created
@@ -121,7 +139,7 @@ def test_failed_processing_rolls_back_receipt(consumer_setup):
     ):
         process_order_created(invalid_message)
 
-    # The receipt inserted before the failure must be rolled back.
+    # Failed processing must roll back the receipt.
     with sessions() as session:
         receipt = session.get(
             ProcessedEvent,
