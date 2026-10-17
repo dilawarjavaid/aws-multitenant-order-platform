@@ -1,8 +1,7 @@
 import os
 from uuid import uuid4
-
 import pytest
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 
 
@@ -101,3 +100,104 @@ def test_rejects_order_with_a_missing_product(catalog_setup):
 
     with pytest.raises(ProductNotAvailableError):
         get_order_products(session, owner_id, request)
+
+@pytest.mark.parametrize("product_case", ["other_tenant", "missing"])
+def test_create_order_rejects_unavailable_products(
+    catalog_setup,
+    monkeypatch,
+    product_case,
+):
+    from sqlalchemy.orm import sessionmaker
+
+    from app import order_service
+    from app.catalog import ProductNotAvailableError
+    from app.models import Order, OutboxEvent
+    from app.schemas import OrderCreate
+
+    session, owner_id, other_id, product_id = catalog_setup
+
+    # Bind the service to the fixture's existing test transaction.
+    sessions = sessionmaker(
+        bind=session.connection(),
+        expire_on_commit=False,
+        join_transaction_mode="create_savepoint",
+    )
+    monkeypatch.setattr(order_service, "SessionLocal", sessions)
+
+    if product_case == "other_tenant":
+        tenant_id = other_id
+        requested_product_id = product_id
+    else:
+        tenant_id = owner_id
+        requested_product_id = uuid4()
+
+    request = OrderCreate(
+        items=[
+            {
+                "product_id": requested_product_id,
+                "quantity": 1,
+            }
+        ]
+    )
+
+    with pytest.raises(ProductNotAvailableError):
+        order_service.create_order(tenant_id, request)
+
+    orders = session.scalars(
+        select(Order).where(Order.tenant_id == tenant_id)
+    ).all()
+
+    events = session.scalars(
+        select(OutboxEvent).where(OutboxEvent.tenant_id == tenant_id)
+    ).all()
+
+    assert orders == []
+    assert events == []
+
+def test_api_rejects_another_tenants_product(catalog_setup, monkeypatch):
+    from fastapi.testclient import TestClient
+    from sqlalchemy.orm import sessionmaker
+
+    from app import order_service
+    from app.main import app
+    from app.models import Order, OutboxEvent
+
+    session, _, other_id, product_id = catalog_setup
+
+    sessions = sessionmaker(
+        bind=session.connection(),
+        expire_on_commit=False,
+        join_transaction_mode="create_savepoint",
+    )
+    monkeypatch.setattr(order_service, "SessionLocal", sessions)
+    monkeypatch.setenv("ENABLE_DEV_ORDER_API", "true")
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/orders",
+            headers={"X-Tenant-ID": str(other_id)},
+            json={
+                "items": [
+                    {
+                        "product_id": str(product_id),
+                        "quantity": 1,
+                    }
+                ]
+            },
+        )
+
+    assert response.status_code == 422
+    assert response.json() == {
+        "detail": "One or more products are unavailable for this retailer"
+    }
+
+    orders = session.scalars(
+        select(Order).where(Order.tenant_id == other_id)
+    ).all()
+
+    events = session.scalars(
+        select(OutboxEvent).where(OutboxEvent.tenant_id == other_id)
+    ).all()
+
+    assert orders == []
+    assert events == []

@@ -1,8 +1,11 @@
 from uuid import UUID
+
+from sqlalchemy import select
+
+from app.catalog import get_order_products
 from app.database import SessionLocal
 from app.models import Order, OrderItem, OutboxEvent, Tenant
 from app.schemas import OrderCreate, OrderItemResponse, OrderResponse
-from sqlalchemy import select
 
 
 class TenantNotFoundError(Exception):
@@ -13,6 +16,9 @@ def create_order(tenant_id: UUID, request: OrderCreate) -> OrderResponse:
     with SessionLocal.begin() as session:
         if session.get(Tenant, tenant_id) is None:
             raise TenantNotFoundError("Tenant does not exist")
+
+        # Reject missing products and products owned by another tenant.
+        get_order_products(session, tenant_id, request)
 
         order = Order(tenant_id=tenant_id)
         session.add(order)
@@ -61,6 +67,7 @@ def create_order(tenant_id: UUID, request: OrderCreate) -> OrderResponse:
         )
 
     return response
+
 
 def get_order(tenant_id: UUID, order_id: UUID) -> OrderResponse | None:
     with SessionLocal() as session:
