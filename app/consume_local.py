@@ -2,7 +2,7 @@ import boto3
 from botocore.config import Config
 
 from app.events import EventMessage
-from app.order_consumer import process_order_created
+from app.inventory_consumer import process_inventory_event
 
 
 def main() -> None:
@@ -37,16 +37,19 @@ def main() -> None:
         queue_message = messages[0]
         event = EventMessage.model_validate_json(queue_message["Body"])
 
-        processed = process_order_created(event)
+        processed = process_inventory_event(event)
 
-        # Processing has committed before we acknowledge the queue message.
+        # Acknowledge only after the inventory transaction commits.
         client.delete_message(
             QueueUrl=queue_url,
             ReceiptHandle=queue_message["ReceiptHandle"],
         )
 
         if processed:
-            print(f"Processed and acknowledged event {event.event_id}")
+            print(
+                f"Reserved inventory and acknowledged event {event.event_id} "
+                f"for order {event.order_id}"
+            )
         else:
             print(f"Acknowledged duplicate event {event.event_id}")
     finally:
