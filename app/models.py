@@ -5,6 +5,7 @@ from sqlalchemy import (
     CheckConstraint,
     DateTime,
     ForeignKey,
+    Integer,
     String,
     func,
 )
@@ -51,3 +52,21 @@ class Order(Base):
         server_default=func.now(),
         nullable=False,
     )
+
+class OrderItem(Base):
+    __tablename__ = "order_items"
+    __table_args__ = (
+        CheckConstraint(
+            "quantity >= 1 AND quantity <= 1000",
+            name="ck_order_items_quantity",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    order_id: Mapped[UUID] = mapped_column(
+        ForeignKey("orders.id"),
+        nullable=False,
+        index=True,
+    )
+    product_id: Mapped[UUID] = mapped_column(nullable=False)
+    quantity: Mapped[int] = mapped_column(Integer, nullable=False)
