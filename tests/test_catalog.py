@@ -242,3 +242,57 @@ def test_order_keeps_price_after_catalog_changes(catalog_setup, monkeypatch):
         assert item.unit_price_minor == 1999
         assert item.currency == "USD"
         assert item.quantity == 2
+
+def test_api_returns_saved_order_prices(catalog_setup, monkeypatch):
+    from fastapi.testclient import TestClient
+    from sqlalchemy.orm import sessionmaker
+
+    from app import order_service
+    from app.main import app
+    from app.models import Product
+
+    session, owner_id, _, product_id = catalog_setup
+
+    sessions = sessionmaker(
+        bind=session.connection(),
+        expire_on_commit=False,
+        join_transaction_mode="create_savepoint",
+    )
+    monkeypatch.setattr(order_service, "SessionLocal", sessions)
+    monkeypatch.setenv("ENABLE_DEV_ORDER_API", "true")
+
+    headers = {"X-Tenant-ID": str(owner_id)}
+
+    with TestClient(app) as client:
+        created = client.post(
+            "/orders",
+            headers=headers,
+            json={
+                "items": [
+                    {
+                        "product_id": str(product_id),
+                        "quantity": 2,
+                    }
+                ]
+            },
+        )
+
+        assert created.status_code == 201
+        order = created.json()
+        assert order["items"][0]["unit_price_minor"] == 1999
+        assert order["items"][0]["currency"] == "USD"
+
+        # A later catalog price change must not alter the API's order price.
+        with sessions.begin() as update_session:
+            product = update_session.get(Product, product_id)
+            assert product is not None
+            product.unit_price_minor = 2999
+
+        retrieved = client.get(
+            f"/orders/{order['id']}",
+            headers=headers,
+        )
+
+        assert retrieved.status_code == 200
+        assert retrieved.json()["items"][0]["unit_price_minor"] == 1999
+        assert retrieved.json()["items"][0]["currency"] == "USD"
