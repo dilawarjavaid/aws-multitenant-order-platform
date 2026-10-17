@@ -201,3 +201,44 @@ def test_api_rejects_another_tenants_product(catalog_setup, monkeypatch):
 
     assert orders == []
     assert events == []
+
+def test_order_keeps_price_after_catalog_changes(catalog_setup, monkeypatch):
+    from sqlalchemy.orm import sessionmaker
+
+    from app import order_service
+    from app.models import OrderItem, Product
+    from app.schemas import OrderCreate
+
+    session, owner_id, _, product_id = catalog_setup
+
+    sessions = sessionmaker(
+        bind=session.connection(),
+        expire_on_commit=False,
+        join_transaction_mode="create_savepoint",
+    )
+    monkeypatch.setattr(order_service, "SessionLocal", sessions)
+
+    request = OrderCreate(
+        items=[{"product_id": product_id, "quantity": 2}]
+    )
+    order = order_service.create_order(owner_id, request)
+
+    # Change the catalog price after the order has been created.
+    with sessions.begin() as update_session:
+        product = update_session.get(Product, product_id)
+        assert product is not None
+        product.unit_price_minor = 2999
+
+    # Read the stored order price independently of the catalog.
+    with sessions() as read_session:
+        item = read_session.scalar(
+            select(OrderItem).where(OrderItem.order_id == order.id)
+        )
+        product = read_session.get(Product, product_id)
+
+        assert item is not None
+        assert product is not None
+        assert product.unit_price_minor == 2999
+        assert item.unit_price_minor == 1999
+        assert item.currency == "USD"
+        assert item.quantity == 2

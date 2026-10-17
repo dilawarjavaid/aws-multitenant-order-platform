@@ -17,8 +17,7 @@ def create_order(tenant_id: UUID, request: OrderCreate) -> OrderResponse:
         if session.get(Tenant, tenant_id) is None:
             raise TenantNotFoundError("Tenant does not exist")
 
-        # Reject missing products and products owned by another tenant.
-        get_order_products(session, tenant_id, request)
+        products = get_order_products(session, tenant_id, request)
 
         order = Order(tenant_id=tenant_id)
         session.add(order)
@@ -29,6 +28,8 @@ def create_order(tenant_id: UUID, request: OrderCreate) -> OrderResponse:
                 order_id=order.id,
                 product_id=item.product_id,
                 quantity=item.quantity,
+                unit_price_minor=products[item.product_id].unit_price_minor,
+                currency=products[item.product_id].currency,
             )
             for item in request.items
         ]
