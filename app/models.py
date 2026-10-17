@@ -61,8 +61,34 @@ class OrderItem(Base):
             "quantity >= 1 AND quantity <= 1000",
             name="ck_order_items_quantity",
         ),
+        CheckConstraint(
+            "unit_price_minor IS NULL OR unit_price_minor >= 0",
+            name="ck_order_items_price",
+        ),
+        CheckConstraint(
+            "(unit_price_minor IS NULL AND currency IS NULL) OR "
+            "(unit_price_minor IS NOT NULL AND currency IS NOT NULL)",
+            name="ck_order_items_price_currency",
+        ),
     )
 
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    order_id: Mapped[UUID] = mapped_column(
+        ForeignKey("orders.id"),
+        nullable=False,
+        index=True,
+    )
+    product_id: Mapped[UUID] = mapped_column(nullable=False)
+    quantity: Mapped[int] = mapped_column(Integer, nullable=False)
+    unit_price_minor: Mapped[int | None] = mapped_column(
+        Integer,
+        nullable=True,
+    )
+    currency: Mapped[str | None] = mapped_column(
+        String(3),
+        nullable=True,
+    )
+    
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
     order_id: Mapped[UUID] = mapped_column(
         ForeignKey("orders.id"),
