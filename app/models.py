@@ -1,5 +1,6 @@
 from datetime import datetime
 from uuid import UUID, uuid4
+from sqlalchemy.dialects.postgresql import JSONB
 
 from sqlalchemy import (
     CheckConstraint,
@@ -70,3 +71,31 @@ class OrderItem(Base):
     )
     product_id: Mapped[UUID] = mapped_column(nullable=False)
     quantity: Mapped[int] = mapped_column(Integer, nullable=False)
+
+class OutboxEvent(Base):
+    __tablename__ = "outbox_events"
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    tenant_id: Mapped[UUID] = mapped_column(
+        ForeignKey("tenants.id"),
+        nullable=False,
+    )
+    aggregate_id: Mapped[UUID] = mapped_column(
+        ForeignKey("orders.id"),
+        nullable=False,
+    )
+    event_type: Mapped[str] = mapped_column(
+        String(100),
+        nullable=False,
+    )
+    payload: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False,
+    )
+    published_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+        index=True,
+    )
