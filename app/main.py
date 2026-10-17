@@ -31,3 +31,23 @@ def create_order_endpoint(
         return create_order(x_tenant_id, request)
     except TenantNotFoundError:
         raise HTTPException(status_code=404, detail="Tenant not found") from None
+
+@app.get(
+    "/orders/{order_id}",
+    response_model=OrderResponse,
+    tags=["Orders"],
+)
+def get_order_endpoint(
+    order_id: UUID,
+    x_tenant_id: UUID = Header(),
+) -> OrderResponse:
+    if os.getenv("ENABLE_DEV_ORDER_API") != "true":
+        raise HTTPException(status_code=404, detail="Not found")
+
+    from app.order_service import get_order
+
+    order = get_order(x_tenant_id, order_id)
+    if order is None:
+        raise HTTPException(status_code=404, detail="Order not found")
+
+    return order
