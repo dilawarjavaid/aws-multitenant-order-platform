@@ -1,6 +1,7 @@
 from datetime import datetime
 from uuid import UUID, uuid4
 from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy import UniqueConstraint
 
 from sqlalchemy import (
     CheckConstraint,
@@ -88,7 +89,7 @@ class OrderItem(Base):
         String(3),
         nullable=True,
     )
-    
+
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
     order_id: Mapped[UUID] = mapped_column(
         ForeignKey("orders.id"),
@@ -169,6 +170,37 @@ class Product(Base):
         default=0,
         server_default="0",
     )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False,
+    )
+
+class InventoryReservation(Base):
+    __tablename__ = "inventory_reservations"
+    __table_args__ = (
+        UniqueConstraint(
+            "order_id",
+            "product_id",
+            name="uq_inventory_reservations_order_product",
+        ),
+        CheckConstraint(
+            "quantity > 0",
+            name="ck_inventory_reservations_quantity",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    order_id: Mapped[UUID] = mapped_column(
+        ForeignKey("orders.id"),
+        nullable=False,
+    )
+    product_id: Mapped[UUID] = mapped_column(
+        ForeignKey("products.id"),
+        nullable=False,
+        index=True,
+    )
+    quantity: Mapped[int] = mapped_column(Integer, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         server_default=func.now(),
