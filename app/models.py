@@ -99,3 +99,19 @@ class OutboxEvent(Base):
         nullable=True,
         index=True,
     )
+
+class ProcessedEvent(Base):
+    __tablename__ = "processed_events"
+
+    consumer_name: Mapped[str] = mapped_column(
+        String(100),
+        primary_key=True,
+    )
+    event_id: Mapped[UUID] = mapped_column(
+        primary_key=True,
+    )
+    processed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False,
+    )
