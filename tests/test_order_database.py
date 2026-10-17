@@ -13,11 +13,12 @@ pytestmark = pytest.mark.skipif(
 
 
 def test_create_order_persists_items(monkeypatch):
+    from sqlalchemy import create_engine
+
     from app import order_service
     from app.database import engine
-    from app.models import Order, OrderItem, Tenant
+    from app.models import Order, OrderItem, OutboxEvent, Tenant
     from app.schemas import OrderCreate
-    from sqlalchemy import create_engine
 
     test_engine = create_engine(
         engine.url.set(database="order_platform_test")
@@ -41,7 +42,9 @@ def test_create_order_persists_items(monkeypatch):
                 product_id = uuid4()
 
                 with test_sessions.begin() as session:
-                    session.add(Tenant(id=tenant_id, name="Test Retailer"))
+                    session.add(
+                        Tenant(id=tenant_id, name="Test Retailer")
+                    )
 
                 request = OrderCreate(
                     items=[
@@ -49,7 +52,7 @@ def test_create_order_persists_items(monkeypatch):
                     ]
                 )
                 result = order_service.create_order(tenant_id, request)
-                
+
                 # The owning tenant can retrieve its order.
                 retrieved = order_service.get_order(tenant_id, result.id)
 
@@ -60,6 +63,7 @@ def test_create_order_persists_items(monkeypatch):
 
                 # Create a second, valid tenant.
                 other_tenant_id = uuid4()
+
                 with test_sessions.begin() as session:
                     session.add(
                         Tenant(
@@ -77,7 +81,7 @@ def test_create_order_persists_items(monkeypatch):
                 # A nonexistent order also returns None.
                 assert order_service.get_order(tenant_id, uuid4()) is None
 
-                # Read through a separate session after the service commits.
+                # Verify records through a separate session.
                 with test_sessions() as session:
                     saved_order = session.get(Order, result.id)
                     saved_items = session.scalars(
@@ -93,26 +97,59 @@ def test_create_order_persists_items(monkeypatch):
                     assert saved_items[0].product_id == product_id
                     assert saved_items[0].quantity == 3
                     assert result.items[0].id == saved_items[0].id
+
+                    # Exactly one unpublished event accompanies the order.
+                    events = session.scalars(
+                        select(OutboxEvent).where(
+                            OutboxEvent.aggregate_id == result.id
+                        )
+                    ).all()
+
+                    assert len(events) == 1
+
+                    event = events[0]
+                    assert event.tenant_id == tenant_id
+                    assert event.event_type == "OrderCreated"
+                    assert event.published_at is None
+                    assert event.payload == {
+                        "schema_version": 1,
+                        "order_id": str(result.id),
+                        "tenant_id": str(tenant_id),
+                        "items": [
+                            {
+                                "product_id": str(product_id),
+                                "quantity": 3,
+                            }
+                        ],
+                    }
             finally:
                 transaction.rollback()
     finally:
         test_engine.dispose()
 
-def test_failed_item_insert_rolls_back_order(monkeypatch):
+
+@pytest.mark.parametrize("failure_target", ["item", "outbox"])
+def test_failed_insert_rolls_back_order(monkeypatch, failure_target):
     from sqlalchemy import create_engine, event
     from sqlalchemy.exc import IntegrityError
 
     from app import order_service
     from app.database import engine
-    from app.models import Order, OrderItem, Tenant
+    from app.models import Order, OrderItem, OutboxEvent, Tenant
     from app.schemas import OrderCreate
 
     test_engine = create_engine(
         engine.url.set(database="order_platform_test")
     )
 
-    def force_invalid_quantity(mapper, connection, target):
-        target.quantity = 0
+    # Deliberately violate a database constraint during insertion.
+    def force_invalid_insert(mapper, connection, target):
+        if failure_target == "item":
+            target.quantity = 0
+        else:
+            target.event_type = None
+
+    failing_model = OrderItem if failure_target == "item" else OutboxEvent
 
     try:
         with test_engine.connect() as connection:
@@ -131,34 +168,50 @@ def test_failed_item_insert_rolls_back_order(monkeypatch):
                 tenant_id = uuid4()
 
                 with test_sessions.begin() as session:
-                    session.add(Tenant(id=tenant_id, name="Rollback Retailer"))
+                    session.add(
+                        Tenant(id=tenant_id, name="Rollback Retailer")
+                    )
 
                 request = OrderCreate(
                     items=[{"product_id": uuid4(), "quantity": 2}]
                 )
 
                 event.listen(
-                    OrderItem, "before_insert", force_invalid_quantity
+                    failing_model, "before_insert", force_invalid_insert
                 )
                 try:
                     with pytest.raises(IntegrityError) as error:
                         order_service.create_order(tenant_id, request)
                 finally:
                     event.remove(
-                        OrderItem, "before_insert", force_invalid_quantity
+                        failing_model, "before_insert", force_invalid_insert
                     )
 
-                assert (
-                    error.value.orig.diag.constraint_name
-                    == "ck_order_items_quantity"
-                )
+                # Confirm that the intended constraint caused the failure.
+                if failure_target == "item":
+                    assert (
+                        error.value.orig.diag.constraint_name
+                        == "ck_order_items_quantity"
+                    )
+                else:
+                    assert (
+                        error.value.orig.diag.column_name == "event_type"
+                    )
 
+                # Neither the order nor its event should remain.
                 with test_sessions() as session:
                     orders = session.scalars(
                         select(Order).where(Order.tenant_id == tenant_id)
                     ).all()
 
+                    events = session.scalars(
+                        select(OutboxEvent).where(
+                            OutboxEvent.tenant_id == tenant_id
+                        )
+                    ).all()
+
                     assert orders == []
+                    assert events == []
             finally:
                 transaction.rollback()
     finally:

@@ -1,7 +1,6 @@
 from uuid import UUID
-
 from app.database import SessionLocal
-from app.models import Order, OrderItem, Tenant
+from app.models import Order, OrderItem, OutboxEvent, Tenant
 from app.schemas import OrderCreate, OrderItemResponse, OrderResponse
 from sqlalchemy import select
 
@@ -28,6 +27,26 @@ def create_order(tenant_id: UUID, request: OrderCreate) -> OrderResponse:
             for item in request.items
         ]
         session.add_all(items)
+        session.flush()
+
+        event = OutboxEvent(
+            tenant_id=tenant_id,
+            aggregate_id=order.id,
+            event_type="OrderCreated",
+            payload={
+                "schema_version": 1,
+                "order_id": str(order.id),
+                "tenant_id": str(tenant_id),
+                "items": [
+                    {
+                        "product_id": str(item.product_id),
+                        "quantity": item.quantity,
+                    }
+                    for item in items
+                ],
+            },
+        )
+        session.add(event)
         session.flush()
 
         response = OrderResponse(
