@@ -206,3 +206,38 @@ class InventoryReservation(Base):
         server_default=func.now(),
         nullable=False,
     )
+
+class Payment(Base):
+    __tablename__ = "payments"
+    __table_args__ = (
+        UniqueConstraint(
+            "order_id",
+            name="uq_payments_order_id",
+        ),
+        CheckConstraint(
+            "amount_minor >= 0",
+            name="ck_payments_amount",
+        ),
+        CheckConstraint(
+            "status IN ('succeeded', 'failed')",
+            name="ck_payments_status",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    order_id: Mapped[UUID] = mapped_column(
+        ForeignKey("orders.id"),
+        nullable=False,
+    )
+    amount_minor: Mapped[int] = mapped_column(Integer, nullable=False)
+    currency: Mapped[str] = mapped_column(String(3), nullable=False)
+    status: Mapped[str] = mapped_column(String(20), nullable=False)
+    provider_reference: Mapped[str] = mapped_column(
+        String(200),
+        nullable=False,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False,
+    )
