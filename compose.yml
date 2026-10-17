@@ -1,0 +1,26 @@
+services:
+  postgres:
+    image: postgres:17
+    environment:
+      POSTGRES_DB: order_platform
+      POSTGRES_USER: order_admin
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U order_admin -d order_platform"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  elasticmq:
+    image: softwaremill/elasticmq-native:latest
+    ports:
+      - "127.0.0.1:9324:9324"
+    volumes:
+      - ./elasticmq.conf:/opt/elasticmq.conf:ro
+
+volumes:
+  postgres_data:
